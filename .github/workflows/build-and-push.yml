@@ -1,6 +1,8 @@
 name: Build and deploy
 
 on:
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       tag_version:
@@ -16,10 +18,22 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Set manual or automatic Push
+        id: set-tag
+        run: |
+          if [ "${{ github.event_name }}" == "release" ]; then
+            echo "TAG_VERSION=${{ github.event.release.tag_name }}" >> $GITHUB_ENV
+          else
+            if [[ "${{ github.event.inputs.tag_version }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "TAG_VERSION=${{ github.event.release.tag_name }}" >> $GITHUB_ENV
+            else
+              echo "Invalid tag format, use vX.Y.Z"
+              exit 1
+            fi
+          fi
+
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.inputs.branch }}
 
       - name: Login Dockerhub
         uses: docker/login-action@v3
@@ -29,17 +43,21 @@ jobs:
 
       - name: Build and tag docker image
         run: |
-          docker build -t ${{ secrets.DOCKER_USERNAME }}/testing-welcome:latest -t ${{ secrets.DOCKER_USERNAME }}/testing-welcome:${{ github.event.inputs.tag_version }} .
+          docker build -t ${{ secrets.DOCKER_USERNAME }}/testing-welcome:latest -t ${{ secrets.DOCKER_USERNAME }}/testing-welcome:$TAG_VERSION .
 
       - name: Push docker image to docker hub
         run: |
           docker push ${{ secrets.DOCKER_USERNAME }}/testing-welcome:latest
-          docker push ${{ secrets.DOCKER_USERNAME }}/testing-welcome:${{ github.event.inputs.tag_version }}
+          docker push ${{ secrets.DOCKER_USERNAME }}/testing-welcome:$TAG_VERSION
 
   deploy:
     needs: build
     runs-on: ubuntu-latest
+
     steps:
+      - name: Set Tag Version
+        run: echo "TAG_VERSION=${{ github.event.release.tag_name || github.event.inputs.tag_version }}" >> $GITHUB_ENV
+
       - name: Set up ssh
         run: |
           mkdir -p ~/.ssh
@@ -49,8 +67,9 @@ jobs:
       
       - name: Deploy
         run: |
-          ssh ${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP } << 'EOF'
-          docker pull ${{ secrets.DOCKER_USERNAME }}/testing-welcome:${{ github.event.inputs.tag_version }}
+          ssh ${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }} << 'EOF'
+          docker pull ${{ secrets.DOCKER_USERNAME }}/testing-welcome:$TAG_VERSION
           docker stop welcome-app || true
           docker rm welcome-app || true
-          docker run -d --name welcome-app -p 8000:5000 --restart unless-stopped testing/welcome:${{ github.event.inputs.tag_version }}
+          docker run -d --name welcome-app -p 8000:5000 --restart unless-stopped ${{ secrets.DOCKER_USERNAME }}/testing-welcome:$TAG_VERSION
+          EOF
