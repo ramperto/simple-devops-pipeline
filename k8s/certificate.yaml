@@ -1,0 +1,13 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: welcome-app-certificate
+  namespace: default
+spec:
+  secretName: welcome-app-tls
+  issuerRef:
+    name: "letsencrypt-prod"
+    kind: ClusterIssuer
+  commonName: welcome.sltr.id
+  dnsNames:
+    - welcome.sltr.id
